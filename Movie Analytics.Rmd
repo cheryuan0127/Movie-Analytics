@@ -1,0 +1,564 @@
+---
+title: "The Story of Movie"
+output:
+  pdf_document: default
+  html_document: default
+sansfont: Calibri Light
+fontsize: 12
+---
+###For movies_metadata, we performed several steps to get the data prepared for model selection: 
+We primarily focus on two datasets which are movies_metadata.csv and ratings.csv. We let average rating be the createria to evaluate the quality of movies. For the purpose of building model to assess the movie, we decide to leave out several variables based on their variable types and practical significance. These variables include budget, revenue, runtime, timing factors (day of the week and year), production countries, cast and crew. And we use python to clean the raw data, leaving only relevant observations. We also created indicator variables based on characteristics of each factor.
+
+Dependent Var | Coefficiennts
+------------- | -------------
+budget        | -0.027 
+popularity    | 0.040
+revenue       | 0.003
+runtime       | 0.024
+dayMon        | 0.361
+dayTue        | 0.499
+dayWed        | 0.345
+dayThu        | 0.211
+daySat        | 0.341
+daySun        | 0.463
+year          | -0.023
+country#      | 0.138
+cast_size     | 0.008
+crew_size     | 0.006
+En Langrage   | 0.338
+MadeinusUS    | -0.874
+not winter    | 0.202
+goodactor     | 0.469
+gooddir       | 0.478
+
+```{python eval=FALSE, include=FALSE}
+#clean data
+#*For ratings dataset, we first calculated the average rating and performed inner-join with another dataset called ?link? based on movie ID, creating the new table called lk. Next, we performed the  inner-join on new table ?lk? with  ?movies_metadata? based on movie ID. Change the variable type of budget into numeric type.Delete any observations if there is ?NA? value for any variable.Therefore, we have the final clean dataset called movies.
+
+#import packages that might be used.
+import pandas as pd
+import json
+import datetime
+import ast
+import numpy as np
+from scipy import stats
+pd.set_option('display.max_colwidth', 50)
+
+#Read Data
+df = pd.read_csv('C:\\Users\\34808\\Desktop\\APA\\HW2\\the-movies-dataset\\movies_metadata.csv')
+credit = pd.read_csv('C:\\Users\\34808\\Desktop\\APA\\HW2\\the-movies-dataset\\credits.csv')
+links = pd.read_csv('C:\\Users\\34808\\Desktop\\APA\\HW2\\the-movies-dataset\\links.csv')
+rating = pd.read_csv('C:\\Users\\34808\\Desktop\\APA\\HW2\\the-movies-dataset\\ratings.csv')
+keyword = pd.read_csv('C:\\Users\\34808\\Desktop\\APA\\HW2\\the-movies-dataset\\keywords.csv')
+
+#Get rid of movies having no record in revenue
+df = df[df.revenue != 0]
+#Drop the columns that we think is useless for building the model
+df = df.drop('vote_average', axis=1)
+df = df.drop('vote_count', axis=1)
+df = df.drop('adult', axis=1)
+df = df.drop('belongs_to_collection', axis = 1)
+df = df.drop('homepage', axis = 1)
+df = df.drop('imdb_id', axis = 1)
+df = df.drop('overview', axis = 1)
+df = df.drop('poster_path', axis = 1)
+df = df.drop('status', axis = 1)
+df = df.drop('tagline', axis = 1)
+df = df.drop('video', axis = 1)
+
+#change data type
+#Filter the dataset and delete all the observations with ?revenue=0? or ?budget=0?.
+df['budget'] = pd.to_numeric(df['budget'], errors='coerce')
+#Get rid of the budget of zero
+df = df[df.budget != 0]
+
+
+#Split the release date into three separate columns including year, month, date. For the data column, we categorize the specific date based on which the day of week it is. 
+#Get month and day
+month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+day_order = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+def get_day(x):
+    try:
+        year, month, day = (int(i) for i in x.split('-'))    
+        answer = datetime.date(year, month, day).weekday()
+        return day_order[answer]
+    except:
+        return np.nan
+
+def get_month(x):
+    try:
+        return month_order[int(str(x).split('-')[1]) - 1]
+    except:
+        return np.nan
+
+df['day'] = df['release_date'].apply(get_day)
+df['month'] = df['release_date'].apply(get_month)
+
+df['year'] = pd.to_datetime(df['release_date'], errors='coerce').apply(lambda x: str(x).split('-')[0] if x != np.nan else np.nan)
+
+#Clear all the nas
+df.dropna(axis=0,how='any', inplace = True)
+
+#Find the number of production countries for each movie
+df['production_countries_num'] = df['production_countries'].fillna('[]').apply(ast.literal_eval).apply(lambda x: len(x) if isinstance(x, list) else np.nan)
+
+#Find the number of spoken_languages for each movie
+df['spoken_languages'] = df['spoken_languages'].fillna('[]').apply(ast.literal_eval).apply(lambda x: len(x) if isinstance(x, list) else np.nan)
+
+#Get average score
+score = rating.groupby('movieId').mean()
+
+#Rename column and get rid of useless cols
+a = score.merge(links, on = 'movieId').drop(['timestamp', 'imdbId', 'userId'], axis = 1)
+a = a.rename(columns = {'tmdbId' : 'id'})
+
+#Change data type for merging
+a['id'] = a['id'].astype('float')
+df['id'] = df['id'].astype('float')
+
+#Join data
+df = df.merge(a, on = 'id')
+b = credit.merge(keyword, on = 'id')
+df = df.merge(b, on = 'id')
+
+df2 = df
+
+#Get Cast and Crew
+df2['cast'] = df2['cast'].apply(ast.literal_eval)
+df2['crew'] = df2['crew'].apply(ast.literal_eval)
+
+df2['cast_size'] = df2['cast'].apply(lambda x: len(x))
+df2['crew_size'] = df2['crew'].apply(lambda x: len(x))
+
+s = df2.apply(lambda x: pd.Series(x['cast']),axis=1).stack().reset_index(level=1, drop=True)
+s.name = 'actor'
+cast_df = df2.drop('cast', axis=1).join(s)
+
+s = df2.apply(lambda x: pd.Series(x['cast']),axis=1).stack().reset_index(level=1, drop=True)
+s.name = 'actor'
+cast_df = df2.drop('cast', axis=1).join(s)
+
+cast_df = cast_df[['id', 'actor']]
+
+def get_director(x):
+    for i in x:
+        if i['job'] == 'Director':
+            return i['name']
+return np.nan
+
+def get_director(x):
+    for i in x:
+        if i['job'] == 'Director':
+            return i['name']
+    return np.nan
+
+#Save to final files
+df2.to_csv('C:\\Users\\34808\\Desktop\\Data Mining\\movies.csv')
+
+#save to final files
+cast_df.to_csv('C:\\Users\\34808\\Desktop\\Data Mining\\actor.csv')
+
+```
+
+```{r include=FALSE}
+#load in data
+library(dplyr)
+library(gridExtra)
+library(ggplot2)
+library(GGally)
+library(sqldf)
+movies <- read.csv(file.choose(), stringsAsFactors = FALSE)
+actor <- read.csv(file.choose(), stringsAsFactors = FALSE)
+```
+
+* For production countries and spoken languages, we count the number of records on each row and replace the original columns with new numeric columns. 
+
+```{r include=FALSE}
+#change column name:rating to movie
+colnames(movies)[colnames(movies) == "rating"]<- "score"
+```
+
+* Create a new column called  ?oglang? where  ?En? represents English movies and ?Not En? represents non-English movies. With the same logic,  ?Madeinus? is created to identify whether the movie is produced in USA or not.
+
+```{r include=FALSE}
+#divided language into "English"" and "not English""
+movies <- movies %>% mutate(oglang = ifelse(original_language == "en", "En", "Not En"))
+```
+
+```{r include=FALSE}
+#devide countries into "US" and "Not US"
+movies <- movies %>% mutate(Madeinus = ifelse(grepl("United States of America",production_countries), "US", "Not US"))
+```
+
+* Considering the seasonality aspects, we want to look at the month by quarters.Later on we find that quarter is not significant. So we divide year into two categories: winter and not winter.
+
+```{r include=FALSE}
+#month is not significant,add a new quarter column
+movies <- movies %>% mutate(quarter = ifelse(month %in% c("Jan", "Feb", "Mar"), 1,
+                                     ifelse(month %in% c("Apr", "May", "Jun"), 2,
+                                           ifelse(month %in% c("Jul", "Aug", "Sep"),3,
+                                                  4))))
+movies$quarter <- as.factor(movies$quarter)
+```
+
+```{r include=FALSE}
+#only quarter 4 is significant devide quarter into winter and not winter
+movies <- movies %>% mutate(winornot = ifelse(quarter %in% c("1", "2", "3"), 0,
+                                     1))
+```
+
+```{r eval=FALSE, fig.align=4, fig.height=4, fig.width=4, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+#correlation plot
+library(ggplot2)
+library(GGally)
+movies <- movies[,-1]
+p1<- ggcorr(bind_cols(movies %>% select(score),movies %>% select(-score)))
+```
+
+* We define score as the same as average_ratings. In order to build a logitic regression model, we need to convert score into a binary variable. By checking the distribution of score, we decide to consider a score that is greater or equal to 3.58 (which is top 25% of score distribution) as ?good score?. Therefore, we created a new binary variable called ?goodScore? where ?1=good score?, ?0=bad score(<3.58)?. For example, as for good actor we have Brad Pitt, Matt Damon etc.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE, fig.height = 3, fig.width = 3, fig.align = "center"}
+#Average Score histogram
+p2<-ggplot(movies,aes(x=score)) + geom_histogram(fill="dodgerblue",bins = 30) + theme_bw(15) + 
+  xlab("Avg Score") + ylab("number")
+```
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+#find score at 75% quantile
+quantile(movies$score,probs = seq(0, 1, 0.25))
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+#define score greater than 75% quantile as good score
+movies = movies %>% mutate(goodScore = (score >= 3.58)*1)
+```
+
+* Count occurrence of actors in all movies of the dataset, if occurrences >= 30, we consider this actor as a ?good actor (popular actor). Then we create an indicator variable called ?Withgoodactor? to identify those movies with good actors, in which "1"" represents ?movies with good actor?.
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(dplyr)
+#generate a new dataset only include relavant value about actor information
+colnames(actor)[colnames(actor) == "actor"]<- "name"
+actR <- c("name", "id")
+subactor <- actor[actR]
+
+#calculate each actor's total appearance
+act_R <- subactor %>% group_by(name)%>% summarise(cot = n())
+
+
+
+#choose actors whose appearance is greater than or equal to 30, show in decending order
+top_actor_R <- filter(act_R, act_R$cot>=30)
+top_actor_R <-top_actor_R[order(-top_actor_R$cot),]
+head(top_actor_R,10)
+```
+
+```{r include=FALSE}
+#If the actor is a good actor, then 1
+subactor2<- subactor%>% mutate(APP=ifelse(name %in% top_actor_R$name,1,0))
+```
+* And we also count the number of movies for each director in the dataset. If the number of movies is greater or equal to 5, then we define this director as a ?good director?. Then we create an indicator variable called ?Withgooddirct? to identify those movies with good directors, where "1"" represents ?movies with good director?. 
+
+```{r include=FALSE}
+#Sum the number of good actor in the movie
+sub3<- aggregate(subactor2$APP, by = list(name = subactor2$id), FUN = sum)
+```
+
+```{r include=FALSE}
+#Create a new column Withgoodactor
+sub3<- sub3%>% mutate(Withgoodactor=ifelse(sub3$x > 0, "YES","NO")) 
+```
+
+```{r include=FALSE}
+library(sqldf)
+#Put Withgoodactor back to main dataset
+movies<- sqldf('select a.*, b.Withgoodactor
+           from movies a
+           left outer join sub3 b
+           on a.id = b.name;')
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+#calculate each director's total appearance
+dic <- movies %>% group_by(director)%>% summarise(cot = n())
+
+#choose actors whose appearance is greater than or equal to 30, show in decending order
+top_dic_R <- filter(dic, dic$cot>=5)
+top_dic_R <-top_dic_R[order(-top_dic_R$cot),]
+
+dic2 <- movies %>% group_by(director) %>% summarise(avgR = mean(revenue))
+
+top_dic_R2 <- top_n(dic2,20)
+top_dic_R2 <-top_dic_R2[order(-top_dic_R2$avgR),]
+head(top_dic_R2,10)
+```
+```{r include=FALSE}
+movies<- movies %>% mutate(Withgooddir=ifelse(director %in% top_dic_R$director,"YES","NO"))
+```
+
+```{r include=FALSE}
+xtabs(~goodScore + Withgooddir, data = movies)
+```
+
+```{r include=FALSE}
+xtabs(~goodScore + Withgoodactor, data = movies)
+```
+
+```{r include=FALSE}
+#change unit to million
+#Rescale the budget and revenue. Change the unit into millions of dollars 
+movies['budget_million'] = movies['budget']/1000000
+movies['revenue_million'] = movies['revenue']/1000000
+```
+
+```{r include=FALSE}
+summary(movies)
+```
+
+```{r include=FALSE}
+#intercept only model
+logReg1 = glm(goodScore~1,movies,family=binomial)
+int     = coef(logReg1)[1]
+exp(int)/(1+exp(int))
+mean(movies$goodScore==1)
+```
+
+```{r include=FALSE}
+#full model
+logReg2 = glm(goodScore~budget_million+popularity+revenue_million+runtime+day+month+year+production_countries_num+cast_size+crew_size+oglang+Madeinus+Withgoodactor+Withgooddir,data = movies,family=binomial(link="logit"))
+summary(logReg2)
+```
+
+```{r include=FALSE}
+#delete month, add quarter
+#AIC drop from 5129.9 to 5125.7
+logReg3 = glm(goodScore~budget_million+popularity+revenue_million+runtime+day+year+production_countries_num+cast_size+crew_size+oglang+Madeinus+quarter+Withgoodactor+Withgooddir,data = movies,family=binomial(link="logit"))
+summary(logReg3)
+```
+
+```{r include=FALSE}
+#delete quarter add "winter or not"
+#but AIC haven't change much
+logReg4 = glm(goodScore~budget_million+popularity+revenue_million+runtime+day+year+production_countries_num+cast_size+crew_size+oglang+Madeinus+winornot+Withgoodactor+Withgooddir,data = movies,family=binomial(link="logit"))
+summary(logReg4)
+```
+
+```{r include=FALSE}
+#plot day and revenue
+ggplot(movies, aes(x = day, y = revenue))+ geom_boxplot() 
+geom_smooth()
+```
+
+```{r include=FALSE}
+#plot day and score
+ggplot(movies, aes(x = day, y = score))+ geom_boxplot() 
+geom_smooth()
+```
+
+
+```{r include=FALSE}
+#drop day, whose p value is high
+logReg5 = glm(goodScore~budget_million+popularity+revenue_million+runtime+year+production_countries_num+Madeinus+Withgoodactor+Withgooddir,data = movies,family=binomial(link="logit"))
+summary(logReg5)
+```
+
+```{r include=FALSE}
+logReg6 = glm(goodScore~budget_million+popularity+revenue_million+runtime+year+production_countries_num+Madeinus+winornot+Withgoodactor+Withgooddir,data = movies,family=binomial(link="logit"))
+summary(logReg6)
+```
+
+
+```{r include=FALSE}
+#define LRtest
+LRtest = function(mod1,mod2){ #mod2 has more variables
+  tstat = tstat = as.numeric(-2*(logLik(mod1)-logLik(mod2)))
+  df    = length(coef(mod2)) - length(coef(mod1)) #how many extra variables?
+  pchisq(tstat,df,lower.tail = FALSE)
+}
+```
+
+
+```{r include=FALSE}
+#LRtest-5
+LRtest(logReg1,logReg5)
+lmtest::lrtest(logReg5) 
+```
+
+```{r include=FALSE}
+#LRtest-4
+LRtest(logReg1,logReg4)
+lmtest::lrtest(logReg4) 
+```
+
+
+```{r include=FALSE}
+#Decide on a model:
+logRegFin = logReg4
+```
+
+
+```{r include=FALSE}
+#Psuedo R-squared
+1 - logRegFin$deviance/logRegFin$null.deviance
+```
+
+```{r include=FALSE}
+round(coef(logReg4),3)
+```
+
+
+```{r include=FALSE}
+#use the confint function to obtain confidence intervals for the coefficient estimates.
+#based on the profiled log-likelihood function.
+confint(logReg4)
+```
+
+```{r include=FALSE}
+#get CIs based on just the standard errors by using the default method.
+confint.default(logReg4)
+```
+
+```{r include=FALSE}
+#exponentiate the coefficients and interpret them as odds-ratios
+#round(exp(coef(logReg4)),2)
+round(exp(coef(logReg4))/(1+exp(coef(logReg4))),3)
+```
+
+```{r include=FALSE}
+## odds ratios and 95% CI
+exp(cbind(OR = coef(logReg4), confint(logReg4)))
+```
+
+```{r include=FALSE}
+BIC(logReg4)
+```
+
+```{r include=FALSE}
+BIC(logReg2)
+```
+
+
+```{r echo=FALSE , fig.height = 3, fig.width = 5, fig.align = "center"}
+#year and score
+p3<-ggplot(movies, aes(x = year, y = score)) + geom_point() + geom_smooth()
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE , fig.height = 3, fig.width = 5, fig.align = "center"}
+p4<-ggplot(movies, aes(x = cast_size, y = score)) +
+geom_smooth()
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE, fig.height = 3, fig.width = 5, fig.align = "center"}
+p5<-ggplot(movies, aes(x = runtime, y = score)) + geom_point() + geom_smooth()
+```
+
+```{r echo=FALSE,fig.height = 4, fig.width = 5,fig.align="center"}
+newdat <- data.frame(budget_million=seq(-max(movies$budget_million),max(movies$budget_million), len = 100))
+
+regdf = data.frame(intercept = 43, popularity =0,revenue_million =0,runtime =0,day= "Fri", year = 2000, production_countries_num = 1, cast_size = 10, crew_size =10, oglang = "En", Madeinus = "Not US", winornot = 0, Withgoodactor = "NO", Withgooddir = "NO", budget = newdat)
+
+good_prob <- predict(logRegFin, regdf,type = "response")
+
+qplot(newdat$budget_million, good_prob)+theme_bw(15)+geom_line() +labs(x = "Budget in Million", y = "Prob of Good Score",caption = "In reality budget can not be negative", title= "Marginal Effect of Budget_million", subtitle = "The impact of budget varies according to its value")
+```
+
+```{r echo=FALSE,fig.height = 4, fig.width = 5,fig.align="center"}
+newdat2 <- data.frame(runtime=seq(min(movies$runtime),max(movies$runtime), len = 100))
+
+regdf2 = data.frame(intercept = 43,budget_million = 30,popularity =9.5,revenue_million =89,day= "Fri", year = 2000, production_countries_num = 1, cast_size = 23, crew_size =29, oglang = "En", Madeinus = "US", winornot = 0, Withgoodactor = "NO", Withgooddir = "NO", runtime = newdat2)
+
+
+good_prob2 <- predict(logRegFin, regdf2,type = "response")
+
+
+qplot(newdat2$runtime, good_prob2)+theme_bw(15)+geom_line()+labs(x = "Runtime", y = "Prob of Good Score", title= "Marginal Effect of Runtime", subtitle = "The impact of runtime varies according to its value")
+
+#grid.arrange(p6,p7,nrow=1,ncol=2, widths=c(3,3))
+```
+
+## What Makes a good Movie
+
+
+### Year:
+People tend to beautify memories, and this also works for movies. As time goes on (year), it generally become harder for a movie to be considered good. On one hand, people?s expectations towards movies are getting higher. In other words, production companies need to detect the trend and tailor the preferences of people. On the other hand, survivorship bias may also exist. Most movies produced in 80s and 90s are well-known and classic, including The Shawshank Redemption, Forrest Gump and Titanic, and they never fade away with time elapsing. However, this does not mean that there were no junk movies in the past. The movie database is built in the recent years, namely, people might ignored those bad old movies, and only gave high scores to those classic movies.
+
+### Seasons:
+Seasons indeed affect people?s views about movies, especially when it comes to winter. One possible reason might be that there are lot of holidays during the winter. As a result, people tend to be in good mood in those days and are more willing to give high grades for those movies. Nevertheless, self-selection bias might be an issue since those industry giants, who has larger influence in the market, have more chance to release movies in peak seasons. 
+
+### Money:
+Intuitively, revenue and budget shall have vital positive impact on the quality of movies. However, in the model we build, this is not the case when we hold all other variables constant. Investing a huge amount of money may not guarantee a good score. 
+
+### Actors/Directors:
+Star actors and famous directors to some extent guarantee the quality of movies. First, they are more experienced and have better over performance compared to. Second, they typically would not accept bad movie scripts. Those popular actors also have a strong fanbase who will gave high scores to them regardless of the quality of the movies.
+
+### Size:
+Crew size, cast size and production country size have positive impacts on scores because generally the a large and conprehensive team would make a movie more diversified. However, larger size does not indicate a movie is good.
+
+### Length:
+Runtime is also positively related to scores. With more runtime, a movie can better shape the characteristics of roles, enrich the plots and intensify the feelings of audience.
+
+\pagebreak
+## Appendix:
+
+#### Correlation between year and score
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE,fig.height = 3.5, fig.width = 5,fig.align = "center"}
+p3
+```
+
+
+#### Correlation between cast size and score
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE,fig.height = 3.5, fig.width = 5,fig.align = "center"}
+p4
+```
+
+
+#### Correlation between runtime and score
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE,fig.height = 3.5, fig.width = 5,fig.align = "center"}
+p5
+#grid.arrange(p3,p4,p5)
+```
+
+#### Movie title and tagline world cloud
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+## Tagline
+# install.packages("RColorBrewer"")
+# install.packages("tidytext"")
+# install.packages("wordcloud")
+# Load packages
+library(RColorBrewer)
+library(wordcloud)
+library(tidytext)
+library(dplyr)
+
+df <- read.csv("~/Desktop/6251/Week 3/APA HW2/movie data/movies_metadata.csv")
+## title wordcloud
+original_title <- data_frame(txt = as.character(df$title))
+tidy_title <- original_title %>% 
+  unnest_tokens(word, txt)
+cleaned_title <- tidy_title %>%
+  anti_join(get_stopwords())
+title_wordcloud <- cleaned_title %>% 
+  count(word) %>%
+  with(wordcloud(words = word, freq = n, min.freq = 1, 
+                 random.order = FALSE, rot.per = 0.35,
+                 max.words = 100, colors = brewer.pal(8, "Dark2")))
+#title_wordcloud
+
+## tagline wordcloud
+original_tagline <- data_frame(txt = as.character(df$tagline))
+tidy_tagline <- original_tagline %>% 
+  unnest_tokens(word, txt)
+cleaned_tagline <- tidy_tagline %>%
+  anti_join(get_stopwords())
+
+tagline_wordcloud <- cleaned_tagline %>% 
+  count(word) %>%
+  with(wordcloud(words = word, freq = n, min.freq = 1, 
+                 random.order = FALSE, rot.per = 0.35,
+                 max.words = 100, colors = brewer.pal(8, "Dark2")))
+#tagline_wordcloud
+#grid.arrange(title_wordcloud, tagline_wordcloud)
+```
